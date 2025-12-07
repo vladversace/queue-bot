@@ -1,8 +1,9 @@
 import sqlite3
+import os
 from datetime import datetime
 from typing import Optional
 
-DB_PATH = "queue.db"
+DB_PATH = os.getenv("DB_PATH", "queue.db")
 
 
 def get_connection():
