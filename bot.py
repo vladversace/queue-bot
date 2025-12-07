@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 
 # Bot token from environment variable
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",") if x.strip().isdigit()]
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -23,7 +23,7 @@ dp = Dispatcher(storage=storage)
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
+    return user_id in ADMIN_IDS
 
 
 class QueueStates(StatesGroup):
