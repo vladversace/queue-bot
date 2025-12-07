@@ -1,1 +1,1 @@
-web: gunicorn dashboard:app --bind 0.0.0.0:$PORT
+web: python run.py
