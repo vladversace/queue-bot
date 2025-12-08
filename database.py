@@ -76,6 +76,19 @@ def get_events() -> list:
     return events
 
 
+def find_event_by_keyword(keyword: str) -> Optional[dict]:
+    """Find event by partial name match"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM events WHERE LOWER(name) LIKE ? ORDER BY created_at DESC",
+        (f"%{keyword.lower()}%",)
+    )
+    event = cursor.fetchone()
+    conn.close()
+    return dict(event) if event else None
+
+
 def get_event_by_id(event_id: int) -> Optional[dict]:
     conn = get_connection()
     cursor = conn.cursor()
