@@ -90,10 +90,56 @@ def get_event_actions_keyboard(event_id: int, user_id: int = 0) -> InlineKeyboar
 
 
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         await message.answer("У тебя нет доступа к этому боту.")
         return
+    
+    # Проверяем deep link (например /start register_5)
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1 and args[1].startswith("register_"):
+        try:
+            event_id = int(args[1].replace("register_", ""))
+            event = db.get_event_by_id(event_id)
+            
+            if not event:
+                await message.answer("Событие не найдено", reply_markup=get_events_keyboard())
+                return
+            
+            # Проверка подгруппы
+            event_subgroup = event.get("subgroup", 0)
+            if not can_register_for_event(message.from_user.id, event_subgroup):
+                subgroup_names = {1: "1 подгруппы", 2: "2 подгруппы"}
+                await message.answer(f"Только для {subgroup_names[event_subgroup]}", reply_markup=get_events_keyboard())
+                return
+            
+            await state.update_data(event_id=event_id)
+            await state.set_state(QueueStates.waiting_for_position)
+            
+            queue = db.get_queue(event_id)
+            taken_positions = [q["position"] for q in queue]
+            available = [i for i in range(1, event["max_positions"] + 1) if i not in taken_positions]
+            
+            if not available:
+                await message.answer("Все позиции заняты", reply_markup=get_events_keyboard())
+                await state.clear()
+                return
+            
+            nearest = available[0]
+            available_str = ", ".join(map(str, available[:15]))
+            if len(available) > 15:
+                available_str += f"... (ещё {len(available) - 15})"
+            
+            await message.answer(
+                f"📌 {event['name']}\n\n"
+                f"Введи номер позиции (1-{event['max_positions']})\n\n"
+                f"Ближайшая свободная: {nearest}\n"
+                f"Свободные: {available_str}"
+            )
+            return
+        except (ValueError, IndexError):
+            pass
+    
     admin_note = " (ты админ)" if is_admin(message.from_user.id) else ""
     await message.answer(
         f"Бот для записи в очередь на сдачу работ.{admin_note}\n\n"
@@ -176,13 +222,28 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
             elif subgroup == 2:
                 subgroup_text = "\n👥 Только 2 подгруппа"
             
+            # Получаем ID созданного события
+            events = db.get_events()
+            event_id = None
+            for e in events:
+                if e["name"] == event_name:
+                    event_id = e["id"]
+                    break
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📝 Записаться",
+                    url=f"https://t.me/Queue521701_bot?start=register_{event_id}"
+                )]
+            ])
+            
             try:
                 await bot.send_message(
                     chat_id=FORUM_CHAT_ID,
                     message_thread_id=FORUM_THREAD_ID,
                     text=f"📢 Новое событие: {event_name}\n"
-                         f"Мест: {max_pos}{subgroup_text}\n\n"
-                         f"Используй /events в боте чтобы записаться"
+                         f"Мест: {max_pos}{subgroup_text}",
+                    reply_markup=keyboard
                 )
             except Exception:
                 pass
