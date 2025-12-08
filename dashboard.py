@@ -1,7 +1,11 @@
 from flask import Flask, render_template_string
+import os
 import database as db
 
 app = Flask(__name__)
+
+SUBGROUP1_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP1_IDS", "").split(",") if x.strip().isdigit()]
+SUBGROUP2_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP2_IDS", "").split(",") if x.strip().isdigit()]
 
 DASHBOARD_HTML = """
 <!DOCTYPE html>
@@ -72,6 +76,20 @@ DASHBOARD_HTML = """
             flex: 1;
             margin-left: 10px;
         }
+        .subgroup-tag {
+            font-size: 0.75em;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+        .subgroup-1 {
+            background: #3b82f6;
+            color: white;
+        }
+        .subgroup-2 {
+            background: #22c55e;
+            color: white;
+        }
         .empty {
             color: #666;
             font-style: italic;
@@ -107,7 +125,14 @@ DASHBOARD_HTML = """
                 {% for item in event.queue %}
                 <li class="queue-item">
                     <span class="position">{{ item.position }}</span>
-                    <span class="name">{{ item.first_name or item.username or '—' }}</span>
+                    <span class="name">
+                        {{ item.first_name or item.username or '—' }}
+                        {% if item.user_id in subgroup1_ids %}
+                        <span class="subgroup-tag subgroup-1">1</span>
+                        {% elif item.user_id in subgroup2_ids %}
+                        <span class="subgroup-tag subgroup-2">2</span>
+                        {% endif %}
+                    </span>
                 </li>
                 {% endfor %}
             </ul>
@@ -132,7 +157,12 @@ DASHBOARD_HTML = """
 def dashboard():
     db.init_db()
     data = db.get_all_data()
-    return render_template_string(DASHBOARD_HTML, data=data)
+    return render_template_string(
+        DASHBOARD_HTML, 
+        data=data, 
+        subgroup1_ids=SUBGROUP1_IDS, 
+        subgroup2_ids=SUBGROUP2_IDS
+    )
 
 
 if __name__ == "__main__":
