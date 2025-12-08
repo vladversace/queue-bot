@@ -21,6 +21,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             max_positions INTEGER DEFAULT 30,
+            subgroup INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -44,13 +45,13 @@ def init_db():
     conn.close()
 
 
-def add_event(name: str, max_positions: int = 30) -> bool:
+def add_event(name: str, max_positions: int = 30, subgroup: int = 0) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO events (name, max_positions) VALUES (?, ?)",
-            (name, max_positions)
+            "INSERT INTO events (name, max_positions, subgroup) VALUES (?, ?, ?)",
+            (name, max_positions, subgroup)
         )
         conn.commit()
         return True
