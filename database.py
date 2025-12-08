@@ -26,6 +26,12 @@ def init_db():
         )
     """)
     
+    # Миграция: добавить subgroup если нет
+    cursor.execute("PRAGMA table_info(events)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "subgroup" not in columns:
+        cursor.execute("ALTER TABLE events ADD COLUMN subgroup INTEGER DEFAULT 0")
+    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
