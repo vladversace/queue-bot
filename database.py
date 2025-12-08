@@ -204,7 +204,7 @@ def get_all_data() -> dict:
     for event in events:
         event_dict = dict(event)
         cursor.execute(
-            """SELECT position, username, first_name, registered_at
+            """SELECT position, user_id, username, first_name, registered_at
                FROM queue WHERE event_id = ? ORDER BY position""",
             (event["id"],)
         )
