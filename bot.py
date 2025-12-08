@@ -58,6 +58,7 @@ class QueueStates(StatesGroup):
     waiting_for_event_name = State()
     waiting_for_max_positions = State()
     waiting_for_subgroup = State()
+    waiting_for_new_name = State()
 
 
 def get_events_keyboard() -> InlineKeyboardMarkup:
@@ -80,6 +81,7 @@ def get_event_actions_keyboard(event_id: int, user_id: int = 0) -> InlineKeyboar
         [InlineKeyboardButton(text="❌ Отменить запись", callback_data=f"cancel_{event_id}")],
     ]
     if is_admin(user_id):
+        buttons.append([InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"rename_{event_id}")])
         buttons.append([InlineKeyboardButton(text="🗑 Удалить событие", callback_data=f"delete_{event_id}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_events")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -163,6 +165,28 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
             f"Мест: {max_pos}\n"
             f"Подгруппа: {subgroup_names[subgroup]}"
         )
+        
+        # Рассылка уведомлений
+        if subgroup == 0:
+            notify_ids = ALLOWED_IDS
+        elif subgroup == 1:
+            notify_ids = SUBGROUP1_IDS
+        else:
+            notify_ids = SUBGROUP2_IDS
+        
+        # Убираем админа который создал событие
+        notify_ids = [uid for uid in notify_ids if uid != callback.from_user.id]
+        
+        for user_id in notify_ids:
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"📢 Новое событие: {event_name}\n"
+                    f"Мест: {max_pos}\n"
+                    f"Используй /events чтобы записаться"
+                )
+            except Exception:
+                pass  # Пользователь заблокировал бота или не начал диалог
     else:
         await callback.message.edit_text(f"Событие '{event_name}' уже существует")
     
@@ -325,6 +349,40 @@ async def callback_cancel(callback: CallbackQuery):
             f"Занято: {len(queue)}/{event['max_positions']}",
             reply_markup=get_event_actions_keyboard(event_id, callback.from_user.id)
         )
+
+
+@dp.callback_query(F.data.startswith("rename_"))
+async def callback_rename(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только админ может изменять события")
+        return
+    
+    event_id = int(callback.data.split("_")[1])
+    event = db.get_event_by_id(event_id)
+    
+    await state.update_data(rename_event_id=event_id)
+    await state.set_state(QueueStates.waiting_for_new_name)
+    await callback.message.edit_text(f"Текущее название: {event['name']}\n\nВведи новое название:")
+
+
+@dp.message(QueueStates.waiting_for_new_name)
+async def process_new_name(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    event_id = data.get("rename_event_id")
+    
+    if not event_id:
+        await state.clear()
+        return
+    
+    new_name = message.text.strip()
+    success = db.rename_event(event_id, new_name)
+    
+    if success:
+        await message.answer(f"Название изменено на: {new_name}", reply_markup=get_events_keyboard())
+    else:
+        await message.answer("Ошибка: событие с таким названием уже существует", reply_markup=get_events_keyboard())
+    
+    await state.clear()
 
 
 @dp.callback_query(F.data.startswith("delete_"))
