@@ -19,6 +19,8 @@ ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",") if x
 ALLOWED_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_IDS", "").split(",") if x.strip().isdigit()]
 SUBGROUP1_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP1_IDS", "").split(",") if x.strip().isdigit()]
 SUBGROUP2_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP2_IDS", "").split(",") if x.strip().isdigit()]
+FORUM_CHAT_ID = int(os.getenv("FORUM_CHAT_ID", "0"))
+FORUM_THREAD_ID = int(os.getenv("FORUM_THREAD_ID", "0"))
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -166,27 +168,24 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
             f"Подгруппа: {subgroup_names[subgroup]}"
         )
         
-        # Рассылка уведомлений
-        if subgroup == 0:
-            notify_ids = ALLOWED_IDS
-        elif subgroup == 1:
-            notify_ids = SUBGROUP1_IDS
-        else:
-            notify_ids = SUBGROUP2_IDS
-        
-        # Убираем админа который создал событие
-        notify_ids = [uid for uid in notify_ids if uid != callback.from_user.id]
-        
-        for user_id in notify_ids:
+        # Уведомление в форум
+        if FORUM_CHAT_ID and FORUM_THREAD_ID:
+            subgroup_text = ""
+            if subgroup == 1:
+                subgroup_text = "\n👥 Только 1 подгруппа"
+            elif subgroup == 2:
+                subgroup_text = "\n👥 Только 2 подгруппа"
+            
             try:
                 await bot.send_message(
-                    user_id,
-                    f"📢 Новое событие: {event_name}\n"
-                    f"Мест: {max_pos}\n"
-                    f"Используй /events чтобы записаться"
+                    chat_id=FORUM_CHAT_ID,
+                    message_thread_id=FORUM_THREAD_ID,
+                    text=f"📢 Новое событие: {event_name}\n"
+                         f"Мест: {max_pos}{subgroup_text}\n\n"
+                         f"Используй /events в боте чтобы записаться"
                 )
             except Exception:
-                pass  # Пользователь заблокировал бота или не начал диалог
+                pass
     else:
         await callback.message.edit_text(f"Событие '{event_name}' уже существует")
     
