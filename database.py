@@ -96,6 +96,22 @@ def delete_event(event_id: int) -> bool:
     return deleted
 
 
+def rename_event(event_id: int, new_name: str) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE events SET name = ? WHERE id = ?",
+            (new_name, event_id)
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
 def register_position(event_id: int, position: int, user_id: int, 
                       username: str, first_name: str) -> tuple[bool, str]:
     conn = get_connection()
