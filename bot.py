@@ -21,6 +21,7 @@ SUBGROUP1_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP1_IDS", "").split(",
 SUBGROUP2_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP2_IDS", "").split(",") if x.strip().isdigit()]
 FORUM_CHAT_ID = int(os.getenv("FORUM_CHAT_ID", "0"))
 FORUM_THREAD_ID = int(os.getenv("FORUM_THREAD_ID", "0"))
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8080")
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -164,6 +165,104 @@ async def cmd_dashboard(message: types.Message):
     await message.answer(f"Дашборд: {dashboard_url}")
 
 
+@dp.message(Command("q"))
+async def cmd_quick_register(message: types.Message):
+    if not is_allowed(message.from_user.id):
+        return
+    
+    # Парсим аргументы: /q <keyword> [position]
+    args = message.text.split()[1:]  # убираем /q
+    
+    if not args:
+        reply = await message.reply("Использование: /q <название> [позиция]")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    # Проверяем последний аргумент - число или нет
+    position = None
+    if len(args) >= 2 and args[-1].isdigit():
+        position = int(args[-1])
+        keyword = " ".join(args[:-1])
+    else:
+        keyword = " ".join(args)
+    
+    # Ищем событие
+    event = db.find_event_by_keyword(keyword)
+    
+    if not event:
+        reply = await message.reply(f"Событие '{keyword}' не найдено")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    # Проверка подгруппы
+    event_subgroup = event.get("subgroup", 0)
+    if not can_register_for_event(message.from_user.id, event_subgroup):
+        subgroup_names = {1: "1 подгруппы", 2: "2 подгруппы"}
+        reply = await message.reply(f"Только для {subgroup_names[event_subgroup]}")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    # Если позиция не указана - берём ближайшую свободную
+    queue = db.get_queue(event["id"])
+    taken_positions = [q["position"] for q in queue]
+    available = [i for i in range(1, event["max_positions"] + 1) if i not in taken_positions]
+    
+    if not available:
+        reply = await message.reply("Все позиции заняты")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    if position is None:
+        position = available[0]
+    
+    # Регистрируем
+    user = message.from_user
+    success, msg = db.register_position(
+        event_id=event["id"],
+        position=position,
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name
+    )
+    
+    if success:
+        reply = await message.reply(f"✅ Вы записаны в очередь «{event['name']}» на позицию {position}")
+    else:
+        reply = await message.reply(f"❌ {msg}")
+    
+    # Удаляем сообщения
+    await asyncio.sleep(3)
+    try:
+        await message.delete()
+    except:
+        pass
+    await asyncio.sleep(2)
+    try:
+        await reply.delete()
+    except:
+        pass
+
+
 @dp.message(Command("add_event"))
 async def cmd_add_event(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -222,29 +321,24 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
             elif subgroup == 2:
                 subgroup_text = "\n👥 Только 2 подгруппа"
             
-            # Получаем ID созданного события
-            events = db.get_events()
-            event_id = None
-            for e in events:
-                if e["name"] == event_name:
-                    event_id = e["id"]
-                    break
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="📝 Записаться",
-                    url=f"https://t.me/Queue521701_bot?start=register_{event_id}"
-                )]
-            ])
-            
             try:
-                await bot.send_message(
+                msg = await bot.send_message(
                     chat_id=FORUM_CHAT_ID,
                     message_thread_id=FORUM_THREAD_ID,
                     text=f"📢 Новое событие: {event_name}\n"
-                         f"Мест: {max_pos}{subgroup_text}",
-                    reply_markup=keyboard
+                         f"Мест: {max_pos}{subgroup_text}\n\n"
+                         f"Для записи: /q {event_name.split()[0]} [позиция]\n\n"
+                         f"📊 Дашборд: {DASHBOARD_URL}"
                 )
+                # Закрепляем сообщение
+                try:
+                    await bot.pin_chat_message(
+                        chat_id=FORUM_CHAT_ID,
+                        message_id=msg.message_id,
+                        disable_notification=True
+                    )
+                except:
+                    pass
             except Exception:
                 pass
     else:
