@@ -95,6 +95,11 @@ DASHBOARD_HTML = """
             <div class="event-title">{{ event.name }}</div>
             <div class="event-stats">
                 Занято: {{ event.queue|length }} / {{ event.max_positions }}
+                {% if event.subgroup == 1 %}
+                <br>👥 1 подгруппа
+                {% elif event.subgroup == 2 %}
+                <br>👥 2 подгруппа
+                {% endif %}
             </div>
             
             {% if event.queue %}
