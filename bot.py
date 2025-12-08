@@ -16,6 +16,9 @@ logging.basicConfig(level=logging.INFO)
 # Bot token from environment variable
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",") if x.strip().isdigit()]
+ALLOWED_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_IDS", "").split(",") if x.strip().isdigit()]
+SUBGROUP1_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP1_IDS", "").split(",") if x.strip().isdigit()]
+SUBGROUP2_IDS = [int(x.strip()) for x in os.getenv("SUBGROUP2_IDS", "").split(",") if x.strip().isdigit()]
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -26,10 +29,35 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
+def is_allowed(user_id: int) -> bool:
+    if not ALLOWED_IDS:  # если список пустой — доступ всем
+        return True
+    return user_id in ALLOWED_IDS or user_id in ADMIN_IDS
+
+
+def get_user_subgroup(user_id: int) -> int:
+    """0 = не в подгруппе, 1 = первая, 2 = вторая"""
+    if user_id in SUBGROUP1_IDS:
+        return 1
+    if user_id in SUBGROUP2_IDS:
+        return 2
+    return 0
+
+
+def can_register_for_event(user_id: int, event_subgroup: int) -> bool:
+    """Проверяет может ли пользователь записаться на событие"""
+    if event_subgroup == 0:  # общее событие
+        return True
+    if is_admin(user_id):  # админы могут везде
+        return True
+    return get_user_subgroup(user_id) == event_subgroup
+
+
 class QueueStates(StatesGroup):
     waiting_for_position = State()
     waiting_for_event_name = State()
     waiting_for_max_positions = State()
+    waiting_for_subgroup = State()
 
 
 def get_events_keyboard() -> InlineKeyboardMarkup:
@@ -59,6 +87,9 @@ def get_event_actions_keyboard(event_id: int, user_id: int = 0) -> InlineKeyboar
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
+    if not is_allowed(message.from_user.id):
+        await message.answer("У тебя нет доступа к этому боту.")
+        return
     admin_note = " (ты админ)" if is_admin(message.from_user.id) else ""
     await message.answer(
         f"Бот для записи в очередь на сдачу работ.{admin_note}\n\n"
@@ -71,6 +102,9 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("events"))
 async def cmd_events(message: types.Message):
+    if not is_allowed(message.from_user.id):
+        await message.answer("У тебя нет доступа к этому боту.")
+        return
     await message.answer("Выбери событие:", reply_markup=get_events_keyboard())
 
 
@@ -98,18 +132,39 @@ async def process_event_name(message: types.Message, state: FSMContext):
 
 @dp.message(QueueStates.waiting_for_max_positions)
 async def process_max_positions(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    event_name = data["event_name"]
-    
     try:
         max_pos = int(message.text) if message.text.strip() else 30
     except ValueError:
         max_pos = 30
     
-    if db.add_event(event_name, max_pos):
-        await message.answer(f"Событие '{event_name}' создано (макс. {max_pos} позиций)")
+    await state.update_data(max_positions=max_pos)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Общее (все)", callback_data="subgroup_0")],
+        [InlineKeyboardButton(text="1 подгруппа", callback_data="subgroup_1")],
+        [InlineKeyboardButton(text="2 подгруппа", callback_data="subgroup_2")],
+    ])
+    await message.answer("Выбери подгруппу:", reply_markup=keyboard)
+    await state.set_state(QueueStates.waiting_for_subgroup)
+
+
+@dp.callback_query(F.data.startswith("subgroup_"))
+async def process_subgroup(callback: CallbackQuery, state: FSMContext):
+    subgroup = int(callback.data.split("_")[1])
+    data = await state.get_data()
+    event_name = data["event_name"]
+    max_pos = data["max_positions"]
+    
+    subgroup_names = {0: "все", 1: "1 подгруппа", 2: "2 подгруппа"}
+    
+    if db.add_event(event_name, max_pos, subgroup):
+        await callback.message.edit_text(
+            f"Событие '{event_name}' создано\n"
+            f"Мест: {max_pos}\n"
+            f"Подгруппа: {subgroup_names[subgroup]}"
+        )
     else:
-        await message.answer(f"Событие '{event_name}' уже существует")
+        await callback.message.edit_text(f"Событие '{event_name}' уже существует")
     
     await state.clear()
 
@@ -127,6 +182,9 @@ async def callback_back(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("event_"))
 async def callback_event_selected(callback: CallbackQuery):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("У тебя нет доступа")
+        return
     event_id = int(callback.data.split("_")[1])
     event = db.get_event_by_id(event_id)
     if not event:
@@ -136,20 +194,38 @@ async def callback_event_selected(callback: CallbackQuery):
     queue = db.get_queue(event_id)
     taken = len(queue)
     
+    subgroup = event.get("subgroup", 0)
+    subgroup_text = ""
+    if subgroup == 1:
+        subgroup_text = "\n👥 Только 1 подгруппа"
+    elif subgroup == 2:
+        subgroup_text = "\n👥 Только 2 подгруппа"
+    
     await callback.message.edit_text(
         f"📌 {event['name']}\n"
-        f"Занято: {taken}/{event['max_positions']}",
+        f"Занято: {taken}/{event['max_positions']}{subgroup_text}",
         reply_markup=get_event_actions_keyboard(event_id, callback.from_user.id)
     )
 
 
 @dp.callback_query(F.data.startswith("register_"))
 async def callback_register(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("У тебя нет доступа")
+        return
     event_id = int(callback.data.split("_")[1])
+    event = db.get_event_by_id(event_id)
+    
+    # Проверка подгруппы
+    event_subgroup = event.get("subgroup", 0)
+    if not can_register_for_event(callback.from_user.id, event_subgroup):
+        subgroup_names = {1: "1 подгруппы", 2: "2 подгруппы"}
+        await callback.answer(f"Только для {subgroup_names[event_subgroup]}")
+        return
+    
     await state.update_data(event_id=event_id)
     await state.set_state(QueueStates.waiting_for_position)
     
-    event = db.get_event_by_id(event_id)
     queue = db.get_queue(event_id)
     taken_positions = [q["position"] for q in queue]
     
@@ -177,6 +253,9 @@ async def callback_register(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(QueueStates.waiting_for_position)
 async def process_position(message: types.Message, state: FSMContext):
+    if not is_allowed(message.from_user.id):
+        await state.clear()
+        return
     data = await state.get_data()
     event_id = data.get("event_id")
     
@@ -205,6 +284,9 @@ async def process_position(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("queue_"))
 async def callback_queue(callback: CallbackQuery):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("У тебя нет доступа")
+        return
     event_id = int(callback.data.split("_")[1])
     event = db.get_event_by_id(event_id)
     queue = db.get_queue(event_id)
@@ -226,6 +308,9 @@ async def callback_queue(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("cancel_"))
 async def callback_cancel(callback: CallbackQuery):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("У тебя нет доступа")
+        return
     event_id = int(callback.data.split("_")[1])
     user_id = callback.from_user.id
     
