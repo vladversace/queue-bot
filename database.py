@@ -251,7 +251,7 @@ def swap_positions(event_id: int, user1_id: int, user2_id: int) -> bool:
 
 
 def admin_register(event_id: int, position: int, user_id: int, username: str, first_name: str = None) -> tuple[bool, str]:
-    """Admin registers a user by username"""
+    """Admin registers a user by username, replacing if needed"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -267,24 +267,25 @@ def admin_register(event_id: int, position: int, user_id: int, username: str, fi
         conn.close()
         return False, f"Позиция должна быть от 1 до {max_pos}"
     
-    # Check if position is taken
+    # Remove user's existing position if any
     cursor.execute(
-        "SELECT user_id FROM queue WHERE event_id = ? AND position = ?",
-        (event_id, position)
-    )
-    if cursor.fetchone():
-        conn.close()
-        return False, f"Позиция {position} уже занята"
-    
-    # Check if user already registered
-    cursor.execute(
-        "SELECT position FROM queue WHERE event_id = ? AND user_id = ?",
+        "DELETE FROM queue WHERE event_id = ? AND user_id = ?",
         (event_id, user_id)
     )
-    existing = cursor.fetchone()
-    if existing:
-        conn.close()
-        return False, f"Пользователь уже на позиции {existing['position']}"
+    
+    # Remove whoever is on target position
+    cursor.execute(
+        "SELECT username FROM queue WHERE event_id = ? AND position = ?",
+        (event_id, position)
+    )
+    kicked = cursor.fetchone()
+    kicked_msg = ""
+    if kicked:
+        cursor.execute(
+            "DELETE FROM queue WHERE event_id = ? AND position = ?",
+            (event_id, position)
+        )
+        kicked_msg = f"\n@{kicked['username']} был вытеснен с позиции {position}"
     
     # Use first_name if provided, otherwise use username
     display_name = first_name if first_name else username
@@ -296,11 +297,44 @@ def admin_register(event_id: int, position: int, user_id: int, username: str, fi
             (event_id, position, user_id, username, display_name)
         )
         conn.commit()
-        return True, f"Пользователь @{username} записан на позицию {position}"
+        return True, f"Пользователь @{username} записан на позицию {position}{kicked_msg}"
     except sqlite3.IntegrityError:
         return False, "Ошибка записи"
     finally:
         conn.close()
+
+
+def clear_queue(event_id: int) -> int:
+    """Clear all registrations for an event, returns count of deleted"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM queue WHERE event_id = ?", (event_id,))
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def kick_user(event_id: int, username: str) -> tuple[bool, str]:
+    """Remove user from queue by username"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT position FROM queue WHERE event_id = ? AND LOWER(username) = ?",
+        (event_id, username.lower())
+    )
+    user = cursor.fetchone()
+    if not user:
+        conn.close()
+        return False, f"@{username} не найден в очереди"
+    
+    cursor.execute(
+        "DELETE FROM queue WHERE event_id = ? AND LOWER(username) = ?",
+        (event_id, username.lower())
+    )
+    conn.commit()
+    conn.close()
+    return True, f"@{username} исключён (был на позиции {user['position']})"
 
 
 def get_queue(event_id: int) -> list:
