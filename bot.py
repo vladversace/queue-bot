@@ -542,6 +542,56 @@ async def cmd_admin_set(message: types.Message):
     await message.answer(f"{msg}\nСобытие: {event['name']}")
 
 
+@dp.message(Command("clear"))
+async def cmd_admin_clear(message: types.Message):
+    """Admin command: /clear <event>"""
+    if not is_admin(message.from_user.id):
+        await message.answer("Только для админов")
+        return
+    
+    args = message.text.split()[1:]
+    
+    if not args:
+        await message.answer("Использование: /clear <событие>")
+        return
+    
+    keyword = " ".join(args)
+    event = db.find_event_by_keyword(keyword)
+    
+    if not event:
+        await message.answer(f"Событие '{keyword}' не найдено")
+        return
+    
+    deleted = db.clear_queue(event["id"])
+    await message.answer(f"✅ Очередь «{event['name']}» очищена\nУдалено записей: {deleted}")
+
+
+@dp.message(Command("kick"))
+async def cmd_admin_kick(message: types.Message):
+    """Admin command: /kick @username <event>"""
+    if not is_admin(message.from_user.id):
+        await message.answer("Только для админов")
+        return
+    
+    args = message.text.split()[1:]
+    
+    if len(args) < 2 or not args[0].startswith("@"):
+        await message.answer("Использование: /kick @username <событие>")
+        return
+    
+    username = args[0][1:]  # убираем @
+    keyword = " ".join(args[1:])
+    
+    event = db.find_event_by_keyword(keyword)
+    
+    if not event:
+        await message.answer(f"Событие '{keyword}' не найдено")
+        return
+    
+    success, msg = db.kick_user(event["id"], username)
+    await message.answer(f"{msg}\nСобытие: {event['name']}")
+
+
 @dp.message(Command("add_event"))
 async def cmd_add_event(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
