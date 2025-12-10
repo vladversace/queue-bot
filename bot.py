@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import os
+import hashlib
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -11,7 +13,22 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import database as db
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+def log_action(user_id: int, username: str, action: str):
+    """Log user actions"""
+    logger.info(f"[USER:{user_id}|@{username}] {action}")
+
+
+def generate_fake_id(username: str) -> int:
+    """Generate consistent fake ID for unknown users"""
+    hash_obj = hashlib.sha256(username.lower().encode())
+    return int(hash_obj.hexdigest()[:15], 16)
 
 # Bot token from environment variable
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -250,6 +267,7 @@ async def cmd_quick_register(message: types.Message):
     )
     
     if success:
+        log_action(user.id, user.username, f"REGISTER {event['name']} pos {position}")
         reply = await message.reply(f"✅ Вы записаны в очередь «{event['name']}» на позицию {position}")
     else:
         reply = await message.reply(f"❌ {msg}")
@@ -301,6 +319,7 @@ async def cmd_cancel_forum(message: types.Message):
     success, msg = db.cancel_registration(event["id"], message.from_user.id)
     
     if success:
+        log_action(message.from_user.id, message.from_user.username, f"CANCEL {event['name']}")
         reply = await message.reply(f"✅ Вы освободили место в очереди «{event['name']}»")
     else:
         reply = await message.reply(f"❌ Вы не записаны в «{event['name']}»")
@@ -446,6 +465,7 @@ async def callback_exchange_accept(callback: CallbackQuery):
     success = db.swap_positions(exchange["event_id"], from_user_id, callback.from_user.id)
     
     if success:
+        log_action(callback.from_user.id, callback.from_user.username, f"EXCHANGE_ACCEPT {exchange['event_name']} with user {from_user_id}")
         await callback.message.edit_text(
             f"✅ Обмен выполнен!\n\n"
             f"Событие: {exchange['event_name']}\n"
@@ -536,9 +556,10 @@ async def cmd_admin_set(message: types.Message):
     
     # Если не нашли - генерируем ID на основе username
     if not user_id:
-        user_id = hash(username.lower()) % 10000000000
+        user_id = generate_fake_id(username)
     
     success, msg = db.admin_register(event["id"], position, user_id, username, first_name)
+    log_action(message.from_user.id, message.from_user.username, f"ADMIN_SET @{username} to {event['name']} pos {position}: {success}")
     await message.answer(f"{msg}\nСобытие: {event['name']}")
 
 
@@ -563,6 +584,7 @@ async def cmd_admin_clear(message: types.Message):
         return
     
     deleted = db.clear_queue(event["id"])
+    log_action(message.from_user.id, message.from_user.username, f"ADMIN_CLEAR {event['name']} deleted {deleted}")
     await message.answer(f"✅ Очередь «{event['name']}» очищена\nУдалено записей: {deleted}")
 
 
@@ -589,7 +611,28 @@ async def cmd_admin_kick(message: types.Message):
         return
     
     success, msg = db.kick_user(event["id"], username)
+    log_action(message.from_user.id, message.from_user.username, f"ADMIN_KICK @{username} from {event['name']}: {success}")
     await message.answer(f"{msg}\nСобытие: {event['name']}")
+
+
+@dp.message(Command("backup"))
+async def cmd_backup(message: types.Message):
+    """Admin command: /backup - download database file"""
+    if not is_admin(message.from_user.id):
+        await message.answer("Только для админов")
+        return
+    
+    db_path = db.DB_PATH
+    if not os.path.exists(db_path):
+        await message.answer("База данных не найдена")
+        return
+    
+    try:
+        backup_file = FSInputFile(db_path, filename=f"queue_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+        await message.answer_document(backup_file, caption="📦 Бэкап базы данных")
+        log_action(message.from_user.id, message.from_user.username, "BACKUP downloaded")
+    except Exception as e:
+        await message.answer(f"Ошибка создания бэкапа: {e}")
 
 
 @dp.message(Command("add_event"))
@@ -636,6 +679,7 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
     subgroup_names = {0: "все", 1: "1 подгруппа", 2: "2 подгруппа"}
     
     if db.add_event(event_name, max_pos, subgroup):
+        log_action(callback.from_user.id, callback.from_user.username, f"CREATE_EVENT {event_name} max={max_pos} subgroup={subgroup}")
         await callback.message.edit_text(
             f"Событие '{event_name}' создано\n"
             f"Мест: {max_pos}\n"
@@ -826,6 +870,7 @@ async def callback_cancel(callback: CallbackQuery):
     
     if success:
         event = db.get_event_by_id(event_id)
+        log_action(callback.from_user.id, callback.from_user.username, f"CANCEL {event['name']}")
         queue = db.get_queue(event_id)
         await callback.message.edit_text(
             f"📌 {event['name']}\n"
@@ -879,6 +924,7 @@ async def callback_delete(callback: CallbackQuery):
     
     if event:
         db.delete_event(event_id)
+        log_action(callback.from_user.id, callback.from_user.username, f"DELETE_EVENT {event['name']}")
         await callback.answer(f"Событие '{event['name']}' удалено")
         await callback.message.edit_text("Выбери событие:", reply_markup=get_events_keyboard())
     else:
