@@ -250,7 +250,7 @@ def swap_positions(event_id: int, user1_id: int, user2_id: int) -> bool:
         conn.close()
 
 
-def admin_register(event_id: int, position: int, user_id: int, username: str) -> tuple[bool, str]:
+def admin_register(event_id: int, position: int, user_id: int, username: str, first_name: str = None) -> tuple[bool, str]:
     """Admin registers a user by username"""
     conn = get_connection()
     cursor = conn.cursor()
@@ -286,11 +286,14 @@ def admin_register(event_id: int, position: int, user_id: int, username: str) ->
         conn.close()
         return False, f"Пользователь уже на позиции {existing['position']}"
     
+    # Use first_name if provided, otherwise use username
+    display_name = first_name if first_name else username
+    
     try:
         cursor.execute(
             """INSERT INTO queue (event_id, position, user_id, username, first_name)
                VALUES (?, ?, ?, ?, ?)""",
-            (event_id, position, user_id, username, username)
+            (event_id, position, user_id, username, display_name)
         )
         conn.commit()
         return True, f"Пользователь @{username} записан на позицию {position}"
