@@ -56,6 +56,10 @@ def can_register_for_event(user_id: int, event_subgroup: int) -> bool:
     return get_user_subgroup(user_id) == event_subgroup
 
 
+# Pending exchange requests: {target_user_id: {from_user_id, from_username, event_id, event_name}}
+pending_exchanges = {}
+
+
 class QueueStates(StatesGroup):
     waiting_for_position = State()
     waiting_for_event_name = State()
@@ -261,6 +265,279 @@ async def cmd_quick_register(message: types.Message):
         await reply.delete()
     except:
         pass
+
+
+@dp.message(Command("c"))
+async def cmd_cancel_forum(message: types.Message):
+    """Cancel registration from forum: /c <event>"""
+    if not is_allowed(message.from_user.id):
+        return
+    
+    args = message.text.split()[1:]
+    
+    if not args:
+        reply = await message.reply("Использование: /c <название-события>")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    keyword = " ".join(args)
+    event = db.find_event_by_keyword(keyword)
+    
+    if not event:
+        reply = await message.reply(f"Событие '{keyword}' не найдено")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    success, msg = db.cancel_registration(event["id"], message.from_user.id)
+    
+    if success:
+        reply = await message.reply(f"✅ Вы освободили место в очереди «{event['name']}»")
+    else:
+        reply = await message.reply(f"❌ Вы не записаны в «{event['name']}»")
+    
+    await asyncio.sleep(3)
+    try:
+        await message.delete()
+    except:
+        pass
+    await asyncio.sleep(2)
+    try:
+        await reply.delete()
+    except:
+        pass
+
+
+@dp.message(Command("e"))
+async def cmd_exchange(message: types.Message):
+    """Exchange request: /e @username <event>"""
+    if not is_allowed(message.from_user.id):
+        return
+    
+    args = message.text.split()[1:]
+    
+    if len(args) < 2 or not args[0].startswith("@"):
+        reply = await message.reply("Использование: /e @username <событие>")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    target_username = args[0][1:]  # убираем @
+    keyword = " ".join(args[1:])
+    
+    event = db.find_event_by_keyword(keyword)
+    
+    if not event:
+        reply = await message.reply(f"Событие '{keyword}' не найдено")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    # Проверяем что инициатор записан
+    my_position = db.get_user_position(event["id"], message.from_user.id)
+    if not my_position:
+        reply = await message.reply(f"Вы не записаны в «{event['name']}»")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    # Ищем target в очереди
+    queue = db.get_queue(event["id"])
+    target_user = None
+    for q in queue:
+        if q["username"] and q["username"].lower() == target_username.lower():
+            target_user = q
+            break
+    
+    if not target_user:
+        reply = await message.reply(f"@{target_username} не найден в очереди «{event['name']}»")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    if target_user["user_id"] == message.from_user.id:
+        reply = await message.reply("Нельзя меняться с самим собой")
+        await asyncio.sleep(5)
+        try:
+            await message.delete()
+            await reply.delete()
+        except:
+            pass
+        return
+    
+    # Сохраняем pending exchange
+    pending_exchanges[target_user["user_id"]] = {
+        "from_user_id": message.from_user.id,
+        "from_username": message.from_user.username or message.from_user.first_name,
+        "from_position": my_position,
+        "target_position": target_user["position"],
+        "event_id": event["id"],
+        "event_name": event["name"]
+    }
+    
+    # Отправляем запрос target пользователю
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Принять", callback_data=f"exchange_accept_{message.from_user.id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"exchange_decline_{message.from_user.id}")
+        ]
+    ])
+    
+    try:
+        await bot.send_message(
+            target_user["user_id"],
+            f"🔄 Запрос на обмен местами\n\n"
+            f"Событие: {event['name']}\n"
+            f"@{message.from_user.username or message.from_user.first_name} (позиция {my_position}) хочет поменяться с вами (позиция {target_user['position']})",
+            reply_markup=keyboard
+        )
+        reply = await message.reply(f"✅ Запрос на обмен отправлен @{target_username}")
+    except:
+        reply = await message.reply(f"❌ Не удалось отправить запрос @{target_username}. Пользователь не начал диалог с ботом.")
+    
+    await asyncio.sleep(3)
+    try:
+        await message.delete()
+    except:
+        pass
+    await asyncio.sleep(2)
+    try:
+        await reply.delete()
+    except:
+        pass
+
+
+@dp.callback_query(F.data.startswith("exchange_accept_"))
+async def callback_exchange_accept(callback: CallbackQuery):
+    from_user_id = int(callback.data.split("_")[2])
+    
+    exchange = pending_exchanges.get(callback.from_user.id)
+    if not exchange or exchange["from_user_id"] != from_user_id:
+        await callback.answer("Запрос устарел")
+        await callback.message.delete()
+        return
+    
+    # Делаем обмен
+    success = db.swap_positions(exchange["event_id"], from_user_id, callback.from_user.id)
+    
+    if success:
+        await callback.message.edit_text(
+            f"✅ Обмен выполнен!\n\n"
+            f"Событие: {exchange['event_name']}\n"
+            f"Ваша новая позиция: {exchange['from_position']}"
+        )
+        # Уведомляем инициатора
+        try:
+            await bot.send_message(
+                from_user_id,
+                f"✅ @{callback.from_user.username or callback.from_user.first_name} принял обмен!\n\n"
+                f"Событие: {exchange['event_name']}\n"
+                f"Ваша новая позиция: {exchange['target_position']}"
+            )
+        except:
+            pass
+    else:
+        await callback.message.edit_text("❌ Ошибка при обмене")
+    
+    del pending_exchanges[callback.from_user.id]
+
+
+@dp.callback_query(F.data.startswith("exchange_decline_"))
+async def callback_exchange_decline(callback: CallbackQuery):
+    from_user_id = int(callback.data.split("_")[2])
+    
+    exchange = pending_exchanges.get(callback.from_user.id)
+    if not exchange or exchange["from_user_id"] != from_user_id:
+        await callback.answer("Запрос устарел")
+        await callback.message.delete()
+        return
+    
+    await callback.message.edit_text("❌ Вы отклонили запрос на обмен")
+    
+    # Уведомляем инициатора
+    try:
+        await bot.send_message(
+            from_user_id,
+            f"❌ @{callback.from_user.username or callback.from_user.first_name} отклонил запрос на обмен в «{exchange['event_name']}»"
+        )
+    except:
+        pass
+    
+    del pending_exchanges[callback.from_user.id]
+
+
+@dp.message(Command("set"))
+async def cmd_admin_set(message: types.Message):
+    """Admin command: /set @username <event> <position>"""
+    if not is_admin(message.from_user.id):
+        await message.answer("Только для админов")
+        return
+    
+    args = message.text.split()[1:]
+    
+    if len(args) < 3 or not args[0].startswith("@"):
+        await message.answer("Использование: /set @username <событие> <позиция>")
+        return
+    
+    username = args[0][1:]  # убираем @
+    
+    # Последний аргумент - позиция
+    if not args[-1].isdigit():
+        await message.answer("Позиция должна быть числом")
+        return
+    
+    position = int(args[-1])
+    keyword = " ".join(args[1:-1])
+    
+    event = db.find_event_by_keyword(keyword)
+    
+    if not event:
+        await message.answer(f"Событие '{keyword}' не найдено")
+        return
+    
+    # Получаем user_id по username из очереди или генерируем фейковый
+    # Сначала проверяем есть ли в любой очереди
+    all_data = db.get_all_data()
+    user_id = None
+    for ev in all_data.values():
+        for q in ev["queue"]:
+            if q.get("username") and q["username"].lower() == username.lower():
+                user_id = q["user_id"]
+                break
+        if user_id:
+            break
+    
+    # Если не нашли - генерируем ID на основе username
+    if not user_id:
+        user_id = hash(username.lower()) % 10000000000
+    
+    success, msg = db.admin_register(event["id"], position, user_id, username)
+    await message.answer(f"{msg}\nСобытие: {event['name']}")
 
 
 @dp.message(Command("add_event"))
