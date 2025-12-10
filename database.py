@@ -192,6 +192,114 @@ def cancel_registration(event_id: int, user_id: int) -> tuple[bool, str]:
     return False, "Ты не записан на это событие"
 
 
+def get_user_position(event_id: int, user_id: int) -> Optional[int]:
+    """Get user's position in event queue"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT position FROM queue WHERE event_id = ? AND user_id = ?",
+        (event_id, user_id)
+    )
+    result = cursor.fetchone()
+    conn.close()
+    return result["position"] if result else None
+
+
+def swap_positions(event_id: int, user1_id: int, user2_id: int) -> bool:
+    """Swap positions of two users in the queue"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Get both positions
+    cursor.execute(
+        "SELECT position FROM queue WHERE event_id = ? AND user_id = ?",
+        (event_id, user1_id)
+    )
+    pos1 = cursor.fetchone()
+    
+    cursor.execute(
+        "SELECT position FROM queue WHERE event_id = ? AND user_id = ?",
+        (event_id, user2_id)
+    )
+    pos2 = cursor.fetchone()
+    
+    if not pos1 or not pos2:
+        conn.close()
+        return False
+    
+    # Swap using a temporary position
+    try:
+        cursor.execute(
+            "UPDATE queue SET position = -1 WHERE event_id = ? AND user_id = ?",
+            (event_id, user1_id)
+        )
+        cursor.execute(
+            "UPDATE queue SET position = ? WHERE event_id = ? AND user_id = ?",
+            (pos1["position"], event_id, user2_id)
+        )
+        cursor.execute(
+            "UPDATE queue SET position = ? WHERE event_id = ? AND user_id = ?",
+            (pos2["position"], event_id, user1_id)
+        )
+        conn.commit()
+        return True
+    except:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def admin_register(event_id: int, position: int, user_id: int, username: str) -> tuple[bool, str]:
+    """Admin registers a user by username"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Check if event exists
+    cursor.execute("SELECT max_positions FROM events WHERE id = ?", (event_id,))
+    event = cursor.fetchone()
+    if not event:
+        conn.close()
+        return False, "Событие не найдено"
+    
+    max_pos = event["max_positions"]
+    if position < 1 or position > max_pos:
+        conn.close()
+        return False, f"Позиция должна быть от 1 до {max_pos}"
+    
+    # Check if position is taken
+    cursor.execute(
+        "SELECT user_id FROM queue WHERE event_id = ? AND position = ?",
+        (event_id, position)
+    )
+    if cursor.fetchone():
+        conn.close()
+        return False, f"Позиция {position} уже занята"
+    
+    # Check if user already registered
+    cursor.execute(
+        "SELECT position FROM queue WHERE event_id = ? AND user_id = ?",
+        (event_id, user_id)
+    )
+    existing = cursor.fetchone()
+    if existing:
+        conn.close()
+        return False, f"Пользователь уже на позиции {existing['position']}"
+    
+    try:
+        cursor.execute(
+            """INSERT INTO queue (event_id, position, user_id, username, first_name)
+               VALUES (?, ?, ?, ?, ?)""",
+            (event_id, position, user_id, username, username)
+        )
+        conn.commit()
+        return True, f"Пользователь @{username} записан на позицию {position}"
+    except sqlite3.IntegrityError:
+        return False, "Ошибка записи"
+    finally:
+        conn.close()
+
+
 def get_queue(event_id: int) -> list:
     conn = get_connection()
     cursor = conn.cursor()
