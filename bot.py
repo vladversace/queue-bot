@@ -520,14 +520,16 @@ async def cmd_admin_set(message: types.Message):
         await message.answer(f"Событие '{keyword}' не найдено")
         return
     
-    # Получаем user_id по username из очереди или генерируем фейковый
+    # Получаем user_id и first_name по username из очереди или генерируем фейковый
     # Сначала проверяем есть ли в любой очереди
     all_data = db.get_all_data()
     user_id = None
+    first_name = None
     for ev in all_data.values():
         for q in ev["queue"]:
             if q.get("username") and q["username"].lower() == username.lower():
                 user_id = q["user_id"]
+                first_name = q.get("first_name")
                 break
         if user_id:
             break
@@ -536,7 +538,7 @@ async def cmd_admin_set(message: types.Message):
     if not user_id:
         user_id = hash(username.lower()) % 10000000000
     
-    success, msg = db.admin_register(event["id"], position, user_id, username)
+    success, msg = db.admin_register(event["id"], position, user_id, username, first_name)
     await message.answer(f"{msg}\nСобытие: {event['name']}")
 
 
