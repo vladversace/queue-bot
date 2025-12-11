@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import hashlib
+import aiohttp
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart
@@ -14,6 +15,7 @@ import database as db
 
 # Log file path
 LOG_PATH = os.getenv("LOG_PATH", "/data/bot.log")
+BSUIR_GROUP = os.getenv("BSUIR_GROUP", "521701")
 
 # Configure logging
 logging.basicConfig(
@@ -188,6 +190,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         help_text += (
             "\n\n🔧 Админ-команды:\n"
             "/add_event — создать событие\n"
+            "/schedule — загрузить лабы из iis.bsuir.by\n"
             "/set @user <событие> <позиция> — записать\n"
             "/kick @user <событие> — исключить\n"
             "/clear <событие> — очистить очередь\n"
@@ -682,6 +685,117 @@ async def cmd_logs(message: types.Message):
         log_action(message.from_user.id, message.from_user.username, "LOGS downloaded")
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
+
+
+@dp.message(Command("schedule"))
+async def cmd_schedule(message: types.Message):
+    """Admin command: /schedule - fetch labs from BSUIR and create events"""
+    if not is_admin(message.from_user.id):
+        await message.answer("Только для админов")
+        return
+    
+    await message.answer(f"⏳ Загружаю расписание группы {BSUIR_GROUP}...")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://iis.bsuir.by/api/v1/schedule?studentGroup={BSUIR_GROUP}",
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status != 200:
+                    await message.answer(f"Ошибка API: {resp.status}")
+                    return
+                data = await resp.json()
+        
+        # Парсим лабы
+        labs = []
+        days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+        
+        for day in days:
+            day_schedule = data.get("schedules", {}).get(day, [])
+            for lesson in day_schedule:
+                lesson_type = lesson.get("lessonTypeAbbrev", "")
+                if lesson_type == "ЛР":  # Лабораторная работа
+                    subject = lesson.get("subject", "")
+                    subgroup = lesson.get("numSubgroup", 0)
+                    time_start = lesson.get("startLessonTime", "")
+                    time_end = lesson.get("endLessonTime", "")
+                    weeks = lesson.get("weekNumber", [])
+                    
+                    labs.append({
+                        "subject": subject,
+                        "subgroup": subgroup,
+                        "day": day,
+                        "time": f"{time_start}-{time_end}",
+                        "weeks": weeks
+                    })
+        
+        if not labs:
+            await message.answer("Лабораторных работ не найдено")
+            return
+        
+        # Показываем найденные лабы
+        text = f"📚 Найдено {len(labs)} лабораторных:\n\n"
+        for i, lab in enumerate(labs[:15], 1):
+            sub_text = f" (подгр. {lab['subgroup']})" if lab['subgroup'] else ""
+            text += f"{i}. {lab['subject']}{sub_text}\n   {lab['day']} {lab['time']}\n"
+        
+        if len(labs) > 15:
+            text += f"\n... и ещё {len(labs) - 15}"
+        
+        text += "\n\nСоздать события из расписания? /create_from_schedule"
+        
+        # Сохраняем в памяти для создания
+        pending_schedule[message.from_user.id] = labs
+        
+        await message.answer(text)
+        log_action(message.from_user.id, message.from_user.username, f"SCHEDULE fetched {len(labs)} labs")
+        
+    except asyncio.TimeoutError:
+        await message.answer("Таймаут запроса к API")
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}")
+
+
+# Store fetched schedule temporarily
+pending_schedule = {}
+
+
+@dp.message(Command("create_from_schedule"))
+async def cmd_create_from_schedule(message: types.Message):
+    """Create events from fetched schedule"""
+    if not is_admin(message.from_user.id):
+        await message.answer("Только для админов")
+        return
+    
+    labs = pending_schedule.get(message.from_user.id)
+    if not labs:
+        await message.answer("Сначала используй /schedule")
+        return
+    
+    created = 0
+    skipped = 0
+    
+    for lab in labs:
+        # Название: "ПРЕДМЕТ ЛР дата"
+        event_name = f"{lab['subject']} ЛР"
+        
+        # Определяем подгруппу (0 = общее, 1 = первая, 2 = вторая)
+        subgroup = lab['subgroup'] if lab['subgroup'] in [1, 2] else 0
+        
+        # Проверяем нет ли уже такого события
+        existing = db.find_event_by_keyword(event_name)
+        if existing:
+            skipped += 1
+            continue
+        
+        if db.add_event(event_name, 30, subgroup):
+            created += 1
+    
+    del pending_schedule[message.from_user.id]
+    
+    await message.answer(f"✅ Создано событий: {created}\n⏭ Пропущено (уже есть): {skipped}")
+    log_action(message.from_user.id, message.from_user.username, f"SCHEDULE created {created} events")
 
 
 @dp.message(Command("add_event"))
