@@ -12,12 +12,23 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import database as db
 
+# Log file path
+LOG_PATH = os.getenv("LOG_PATH", "/data/bot.log")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Add file handler
+try:
+    file_handler = logging.FileHandler(LOG_PATH, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(file_handler)
+except Exception:
+    pass  # If can't create log file, continue with console only
 
 
 def log_action(user_id: int, username: str, action: str):
@@ -633,6 +644,25 @@ async def cmd_backup(message: types.Message):
         log_action(message.from_user.id, message.from_user.username, "BACKUP downloaded")
     except Exception as e:
         await message.answer(f"Ошибка создания бэкапа: {e}")
+
+
+@dp.message(Command("logs"))
+async def cmd_logs(message: types.Message):
+    """Admin command: /logs - download log file"""
+    if not is_admin(message.from_user.id):
+        await message.answer("Только для админов")
+        return
+    
+    if not os.path.exists(LOG_PATH):
+        await message.answer("Файл логов не найден")
+        return
+    
+    try:
+        log_file = FSInputFile(LOG_PATH, filename=f"bot_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        await message.answer_document(log_file, caption="📋 Логи бота")
+        log_action(message.from_user.id, message.from_user.username, "LOGS downloaded")
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}")
 
 
 @dp.message(Command("add_event"))
