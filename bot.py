@@ -899,6 +899,7 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
                          f"Для записи: /q {event_name.split()[0]} [позиция]\n\n"
                          f"📊 Дашборд: {DASHBOARD_URL}"
                 )
+                logger.info(f"Forum notification sent for {event_name}")
                 # Закрепляем сообщение
                 try:
                     await bot.pin_chat_message(
@@ -906,10 +907,12 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
                         message_id=msg.message_id,
                         disable_notification=True
                     )
-                except:
-                    pass
-            except Exception:
-                pass
+                except Exception as e:
+                    logger.warning(f"Failed to pin message: {e}")
+            except Exception as e:
+                logger.error(f"Failed to send forum notification: {e}")
+        else:
+            logger.warning(f"Forum notification skipped: CHAT_ID={FORUM_CHAT_ID}, THREAD_ID={FORUM_THREAD_ID}")
     else:
         await callback.message.edit_text(f"Событие '{event_name}' уже существует")
     
