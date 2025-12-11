@@ -739,10 +739,11 @@ async def cmd_schedule(message: types.Message):
                     
                     # Вычисляем конкретные даты
                     for week in weeks:
-                        if week >= current_week:  # Только будущие
-                            week_diff = week - current_week
-                            lab_date = monday + timedelta(days=day_offset + week_diff * 7)
-                            
+                        week_diff = week - current_week
+                        lab_date = monday + timedelta(days=day_offset + week_diff * 7)
+                        
+                        # Только сегодня и будущие
+                        if lab_date >= today:
                             labs.append({
                                 "subject": subject,
                                 "subgroup": subgroup,
