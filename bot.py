@@ -173,14 +173,29 @@ async def cmd_start(message: types.Message, state: FSMContext):
         except (ValueError, IndexError):
             pass
     
-    admin_note = " (ты админ)" if is_admin(message.from_user.id) else ""
-    await message.answer(
-        f"Бот для записи в очередь на сдачу работ.{admin_note}\n\n"
-        "Команды:\n"
+    help_text = (
+        "📋 Бот для записи в очередь на сдачу работ\n\n"
+        "👤 Команды:\n"
         "/events — список событий\n"
-        "/dashboard — ссылка на дашборд",
-        reply_markup=get_events_keyboard()
+        "/dashboard — ссылка на дашборд\n\n"
+        "💬 Команды в чате группы:\n"
+        "/q <событие> [позиция] — записаться\n"
+        "/c <событие> — отменить запись\n"
+        "/e @user <событие> — обмен местами"
     )
+    
+    if is_admin(message.from_user.id):
+        help_text += (
+            "\n\n🔧 Админ-команды:\n"
+            "/add_event — создать событие\n"
+            "/set @user <событие> <позиция> — записать\n"
+            "/kick @user <событие> — исключить\n"
+            "/clear <событие> — очистить очередь\n"
+            "/backup — скачать базу данных\n"
+            "/logs — скачать логи"
+        )
+    
+    await message.answer(help_text, reply_markup=get_events_keyboard())
 
 
 @dp.message(Command("events"))
@@ -657,6 +672,10 @@ async def cmd_logs(message: types.Message):
         await message.answer("Файл логов не найден")
         return
     
+    if os.path.getsize(LOG_PATH) == 0:
+        await message.answer("Логи пока пустые")
+        return
+    
     try:
         log_file = FSInputFile(LOG_PATH, filename=f"bot_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
         await message.answer_document(log_file, caption="📋 Логи бота")
@@ -963,6 +982,7 @@ async def callback_delete(callback: CallbackQuery):
 
 async def main():
     db.init_db()
+    logger.info("Bot started")
     await dp.start_polling(bot)
 
 
