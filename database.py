@@ -81,10 +81,21 @@ def find_event_by_keyword(keyword: str) -> Optional[dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT * FROM events WHERE LOWER(name) LIKE ? ORDER BY created_at DESC",
-        (f"%{keyword.lower()}%",)
+        "SELECT * FROM events WHERE name LIKE ? ORDER BY created_at DESC",
+        (f"%{keyword}%",)
     )
     event = cursor.fetchone()
+    
+    # Если не нашли - пробуем без учёта регистра (для кириллицы)
+    if not event:
+        cursor.execute("SELECT * FROM events ORDER BY created_at DESC")
+        all_events = cursor.fetchall()
+        keyword_lower = keyword.lower()
+        for e in all_events:
+            if keyword_lower in e["name"].lower():
+                event = e
+                break
+    
     conn.close()
     return dict(event) if event else None
 
