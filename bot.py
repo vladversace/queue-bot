@@ -882,34 +882,34 @@ async def process_subgroup(callback: CallbackQuery, state: FSMContext):
             f"Подгруппа: {subgroup_names[subgroup]}"
         )
         
-        # Уведомление в форум (временно отключено)
-        # if FORUM_CHAT_ID and FORUM_THREAD_ID:
-        #     subgroup_text = ""
-        #     if subgroup == 1:
-        #         subgroup_text = "\n👥 Только 1 подгруппа"
-        #     elif subgroup == 2:
-        #         subgroup_text = "\n👥 Только 2 подгруппа"
-        #     
-        #     try:
-        #         msg = await bot.send_message(
-        #             chat_id=FORUM_CHAT_ID,
-        #             message_thread_id=FORUM_THREAD_ID,
-        #             text=f"📢 Новое событие: {event_name}\n"
-        #                  f"Мест: {max_pos}{subgroup_text}\n\n"
-        #                  f"Для записи: /q {event_name.split()[0]} [позиция]\n\n"
-        #                  f"📊 Дашборд: {DASHBOARD_URL}"
-        #         )
-        #         # Закрепляем сообщение
-        #         try:
-        #             await bot.pin_chat_message(
-        #                 chat_id=FORUM_CHAT_ID,
-        #                 message_id=msg.message_id,
-        #                 disable_notification=True
-        #             )
-        #         except:
-        #             pass
-        #     except Exception:
-        #         pass
+        # Уведомление в форум
+        if FORUM_CHAT_ID and FORUM_THREAD_ID:
+            subgroup_text = ""
+            if subgroup == 1:
+                subgroup_text = "\n👥 Только 1 подгруппа"
+            elif subgroup == 2:
+                subgroup_text = "\n👥 Только 2 подгруппа"
+            
+            try:
+                msg = await bot.send_message(
+                    chat_id=FORUM_CHAT_ID,
+                    message_thread_id=FORUM_THREAD_ID,
+                    text=f"📢 Новое событие: {event_name}\n"
+                         f"Мест: {max_pos}{subgroup_text}\n\n"
+                         f"Для записи: /q {event_name.split()[0]} [позиция]\n\n"
+                         f"📊 Дашборд: {DASHBOARD_URL}"
+                )
+                # Закрепляем сообщение
+                try:
+                    await bot.pin_chat_message(
+                        chat_id=FORUM_CHAT_ID,
+                        message_id=msg.message_id,
+                        disable_notification=True
+                    )
+                except:
+                    pass
+            except Exception:
+                pass
     else:
         await callback.message.edit_text(f"Событие '{event_name}' уже существует")
     
