@@ -3,7 +3,7 @@ import logging
 import os
 import hashlib
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile
@@ -698,6 +698,14 @@ async def cmd_schedule(message: types.Message):
     
     try:
         async with aiohttp.ClientSession() as session:
+            # Получаем текущую неделю
+            async with session.get(
+                "https://iis.bsuir.by/api/v1/schedule/current-week",
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                current_week = await resp.json() if resp.status == 200 else 1
+            
+            # Получаем расписание
             async with session.get(
                 f"https://iis.bsuir.by/api/v1/schedule?studentGroup={BSUIR_GROUP}",
                 timeout=aiohttp.ClientTimeout(total=10)
@@ -709,10 +717,17 @@ async def cmd_schedule(message: types.Message):
         
         # Парсим лабы
         labs = []
-        days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+        days_map = {
+            "Понедельник": 0, "Вторник": 1, "Среда": 2, 
+            "Четверг": 3, "Пятница": 4, "Суббота": 5
+        }
         
-        for day in days:
-            day_schedule = data.get("schedules", {}).get(day, [])
+        today = datetime.now().date()
+        # Находим понедельник текущей недели
+        monday = today - timedelta(days=today.weekday())
+        
+        for day_name, day_offset in days_map.items():
+            day_schedule = data.get("schedules", {}).get(day_name, [])
             for lesson in day_schedule:
                 lesson_type = lesson.get("lessonTypeAbbrev", "")
                 if lesson_type == "ЛР":  # Лабораторная работа
@@ -722,13 +737,23 @@ async def cmd_schedule(message: types.Message):
                     time_end = lesson.get("endLessonTime", "")
                     weeks = lesson.get("weekNumber", [])
                     
-                    labs.append({
-                        "subject": subject,
-                        "subgroup": subgroup,
-                        "day": day,
-                        "time": f"{time_start}-{time_end}",
-                        "weeks": weeks
-                    })
+                    # Вычисляем конкретные даты
+                    for week in weeks:
+                        if week >= current_week:  # Только будущие
+                            week_diff = week - current_week
+                            lab_date = monday + timedelta(days=day_offset + week_diff * 7)
+                            
+                            labs.append({
+                                "subject": subject,
+                                "subgroup": subgroup,
+                                "day": day_name,
+                                "date": lab_date,
+                                "time": f"{time_start}-{time_end}",
+                                "week": week
+                            })
+        
+        # Сортируем по дате
+        labs.sort(key=lambda x: x["date"])
         
         if not labs:
             await message.answer("Лабораторных работ не найдено")
@@ -738,7 +763,8 @@ async def cmd_schedule(message: types.Message):
         text = f"📚 Найдено {len(labs)} лабораторных:\n\n"
         for i, lab in enumerate(labs[:15], 1):
             sub_text = f" (подгр. {lab['subgroup']})" if lab['subgroup'] else ""
-            text += f"{i}. {lab['subject']}{sub_text}\n   {lab['day']} {lab['time']}\n"
+            date_str = lab["date"].strftime("%d.%m")
+            text += f"{i}. {lab['subject']}{sub_text}\n   📅 {date_str} ({lab['day']}) {lab['time']}\n"
         
         if len(labs) > 15:
             text += f"\n... и ещё {len(labs) - 15}"
@@ -777,8 +803,9 @@ async def cmd_create_from_schedule(message: types.Message):
     skipped = 0
     
     for lab in labs:
-        # Название: "ПРЕДМЕТ ЛР дата"
-        event_name = f"{lab['subject']} ЛР"
+        # Название: "ПРЕДМЕТ дата"
+        date_str = lab['date'].strftime("%d.%m")
+        event_name = f"{lab['subject']} {date_str}"
         
         # Определяем подгруппу (0 = общее, 1 = первая, 2 = вторая)
         subgroup = lab['subgroup'] if lab['subgroup'] in [1, 2] else 0
