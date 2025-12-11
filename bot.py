@@ -3,7 +3,7 @@ import logging
 import os
 import hashlib
 import aiohttp
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile
@@ -722,7 +722,9 @@ async def cmd_schedule(message: types.Message):
             "Четверг": 3, "Пятница": 4, "Суббота": 5
         }
         
-        today = datetime.now().date()
+        # Минск UTC+3
+        minsk_tz = timezone(timedelta(hours=3))
+        today = datetime.now(minsk_tz).date()
         # Находим понедельник текущей недели
         monday = today - timedelta(days=today.weekday())
         
@@ -761,7 +763,7 @@ async def cmd_schedule(message: types.Message):
             return
         
         # Показываем найденные лабы
-        text = f"📚 Найдено {len(labs)} лабораторных:\n\n"
+        text = f"📚 Найдено {len(labs)} лабораторных (с {today.strftime('%d.%m')}):\n\n"
         for i, lab in enumerate(labs[:15], 1):
             sub_text = f" (подгр. {lab['subgroup']})" if lab['subgroup'] else ""
             date_str = lab["date"].strftime("%d.%m")
