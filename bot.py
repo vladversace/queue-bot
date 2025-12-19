@@ -842,6 +842,10 @@ async def cmd_add_event(message: types.Message, state: FSMContext):
 
 @dp.message(QueueStates.waiting_for_event_name)
 async def process_event_name(message: types.Message, state: FSMContext):
+    # Только в приватных чатах
+    if message.chat.type != "private":
+        return
+    
     await state.update_data(event_name=message.text)
     await message.answer("Сколько максимум позиций? (число, по умолчанию 30)")
     await state.set_state(QueueStates.waiting_for_max_positions)
@@ -849,6 +853,10 @@ async def process_event_name(message: types.Message, state: FSMContext):
 
 @dp.message(QueueStates.waiting_for_max_positions)
 async def process_max_positions(message: types.Message, state: FSMContext):
+    # Только в приватных чатах
+    if message.chat.type != "private":
+        return
+    
     try:
         max_pos = int(message.text) if message.text.strip() else 30
     except ValueError:
@@ -1003,6 +1011,10 @@ async def callback_register(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(QueueStates.waiting_for_position)
 async def process_position(message: types.Message, state: FSMContext):
+    # Только в приватных чатах
+    if message.chat.type != "private":
+        return
+    
     if not is_allowed(message.from_user.id):
         await state.clear()
         return
@@ -1094,6 +1106,10 @@ async def callback_rename(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(QueueStates.waiting_for_new_name)
 async def process_new_name(message: types.Message, state: FSMContext):
+    # Только в приватных чатах
+    if message.chat.type != "private":
+        return
+    
     data = await state.get_data()
     event_id = data.get("rename_event_id")
     
@@ -1137,4 +1153,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
