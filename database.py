@@ -46,9 +46,55 @@ def init_db():
             UNIQUE(event_id, user_id)
         )
     """)
-    
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Заполняем таблицу users из исторических данных queue
+    cursor.execute("""
+        INSERT OR IGNORE INTO users (user_id, username, first_name)
+        SELECT DISTINCT user_id, username, first_name FROM queue
+        WHERE username IS NOT NULL OR first_name IS NOT NULL
+    """)
+
     conn.commit()
     conn.close()
+
+
+def upsert_user(user_id: int, username: str, first_name: str):
+    """Cache user info every time they interact with the bot"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO users (user_id, username, first_name, last_seen)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(user_id) DO UPDATE SET
+               username = excluded.username,
+               first_name = excluded.first_name,
+               last_seen = excluded.last_seen""",
+        (user_id, username, first_name)
+    )
+    conn.commit()
+    conn.close()
+
+
+def find_user_by_username(username: str) -> Optional[dict]:
+    """Find cached user by username"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, username, first_name FROM users WHERE LOWER(username) = ?",
+        (username.lower(),)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def add_event(name: str, max_positions: int = 30, subgroup: int = 0) -> bool:

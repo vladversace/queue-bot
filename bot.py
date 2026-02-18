@@ -58,6 +58,22 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 
+@dp.message.outer_middleware()
+async def cache_user_middleware(handler, message: types.Message, data: dict):
+    if message.from_user:
+        u = message.from_user
+        db.upsert_user(u.id, u.username or "", u.first_name or "")
+    return await handler(message, data)
+
+
+@dp.callback_query.outer_middleware()
+async def cache_user_callback_middleware(handler, callback: types.CallbackQuery, data: dict):
+    if callback.from_user:
+        u = callback.from_user
+        db.upsert_user(u.id, u.username or "", u.first_name or "")
+    return await handler(callback, data)
+
+
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
@@ -572,24 +588,35 @@ async def cmd_admin_set(message: types.Message):
         await message.answer(f"Событие '{keyword}' не найдено")
         return
     
-    # Получаем user_id и first_name по username из очереди или генерируем фейковый
-    # Сначала проверяем есть ли в любой очереди
-    all_data = db.get_all_data()
+    # Ищем пользователя сначала в кеше users, потом в очередях
+    cached_user = db.find_user_by_username(username)
     user_id = None
     first_name = None
-    for ev in all_data.values():
-        for q in ev["queue"]:
-            if q.get("username") and q["username"].lower() == username.lower():
-                user_id = q["user_id"]
-                first_name = q.get("first_name")
+
+    if cached_user:
+        user_id = cached_user["user_id"]
+        first_name = cached_user["first_name"] or None
+    else:
+        # Fallback: ищем в очередях
+        all_data = db.get_all_data()
+        for ev in all_data.values():
+            for q in ev["queue"]:
+                if q.get("username") and q["username"].lower() == username.lower():
+                    user_id = q["user_id"]
+                    first_name = q.get("first_name")
+                    break
+            if user_id:
                 break
-        if user_id:
-            break
-    
-    # Если не нашли - генерируем ID на основе username
+
     if not user_id:
-        user_id = generate_fake_id(username)
-    
+        await message.answer(
+            f"❌ Пользователь @{username} не найден в базе.\n"
+            f"Он должен хотя бы раз написать боту, чтобы бот знал его имя.\n\n"
+            f"Чтобы записать с произвольным именем: /set @{username} {keyword} {position}\n"
+            f"(сейчас запись невозможна — неизвестный пользователь)"
+        )
+        return
+
     success, msg = db.admin_register(event["id"], position, user_id, username, first_name)
     log_action(message.from_user.id, message.from_user.username, f"ADMIN_SET @{username} to {event['name']} pos {position}: {success}")
     await message.answer(f"{msg}\nСобытие: {event['name']}")
