@@ -123,27 +123,37 @@ def get_events() -> list:
 
 
 def find_event_by_keyword(keyword: str) -> Optional[dict]:
-    """Find event by partial name match"""
+    """Find event by keyword: exact match first, then partial"""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM events WHERE name LIKE ? ORDER BY created_at DESC",
-        (f"%{keyword}%",)
-    )
-    event = cursor.fetchone()
-    
-    # Если не нашли - пробуем без учёта регистра (для кириллицы)
-    if not event:
-        cursor.execute("SELECT * FROM events ORDER BY created_at DESC")
-        all_events = cursor.fetchall()
-        keyword_lower = keyword.lower()
-        for e in all_events:
-            if keyword_lower in e["name"].lower():
-                event = e
-                break
-    
+    keyword_lower = keyword.lower()
+
+    cursor.execute("SELECT * FROM events ORDER BY created_at DESC")
+    all_events = cursor.fetchall()
     conn.close()
-    return dict(event) if event else None
+
+    # 1. Точное совпадение (без учёта регистра)
+    for e in all_events:
+        if e["name"].lower() == keyword_lower:
+            return dict(e)
+
+    # 2. Название начинается с keyword (например "ОАиП" → "ОАиП 26.02")
+    for e in all_events:
+        if e["name"].lower().startswith(keyword_lower):
+            return dict(e)
+
+    # 3. keyword встречается как отдельное слово в названии
+    for e in all_events:
+        words = e["name"].lower().split()
+        if keyword_lower in words:
+            return dict(e)
+
+    # 4. Частичное вхождение (fallback)
+    for e in all_events:
+        if keyword_lower in e["name"].lower():
+            return dict(e)
+
+    return None
 
 
 def get_event_by_id(event_id: int) -> Optional[dict]:
